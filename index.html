@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Doom in the Cursor</title>
+  <style>
+    body { margin: 16px; font-family: system-ui, Segoe UI, Arial, sans-serif; background: #fff; color: #111; }
+    button, input { margin-right: 8px; padding: 6px 10px; }
+    #dosboxWrap { margin-top: 12px; display: block; }
+    #dosbox { width: 640px; height: 400px; border: 1px solid #ccc; }
+    html.cursor-on, html.cursor-on * { cursor: none !important; }
+    #cursorCanvas { position: fixed; left: 0; top: 0; z-index: 2147483647; pointer-events: none; transform: translate3d(-9999px,-9999px,0); }
+  </style>
+</head>
+
+<body>
+  <h2 style="margin:0 0 8px 0;">Doom in the Cursor</h2>
+
+  <div>
+    <button id="btnCursor">Cursor ON/OFF</button>
+    <button id="btnWindow">Show/Hide Doom Window</button>
+    <label>Size: <input type="number" id="sizeInput" value="128" min="16" max="1024" step="16"></label>
+  </div>
+
+  <p style="margin:10px 0;">
+    Shortcuts: <code>Ctrl + Shift + D</code> (cursor ON/OFF),
+    <code>Ctrl + Shift + V</code> (show/hide window).<br>
+    Doom controls: arrow keys to move, <code>Ctrl</code> to shoot,
+    <code>Space</code> to interact.
+  </p>
+
+  <div id="dosboxWrap">
+    <div id="dosbox"></div>
+  </div>
+
+  <canvas id="cursorCanvas"></canvas>
+
+  <script src="https://js-dos.com/cdn/js-dos-api.js"></script>
+  <script>
+    // Config
+    const ZIP_PATH = "doom19s.zip";
+    const EXE_PATH = "./DOOM.EXE";
+    let CURSOR_SIZE = 128;
+    const HOTSPOT_X = 0;
+    const HOTSPOT_Y = 0;
+
+    // Elements
+    const html = document.documentElement;
+    const dosboxWrap = document.getElementById("dosboxWrap");
+    const btnCursor = document.getElementById("btnCursor");
+    const btnWindow = document.getElementById("btnWindow");
+    const sizeInput = document.getElementById("sizeInput");
+
+    const cursorCanvas = document.getElementById("cursorCanvas");
+    const cursorCtx = cursorCanvas.getContext("2d", { alpha: true });
+
+    // Offline canvases
+    const maskCanvas = document.createElement("canvas");
+    const maskCtx = maskCanvas.getContext("2d");
+    const outlineCanvas = document.createElement("canvas");
+    const outlineCtx = outlineCanvas.getContext("2d");
+
+    const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+
+    // UI State
+    let enabled = true;
+
+    function setEnabled(v) {
+      enabled = v;
+      html.classList.toggle("cursor-on", enabled);
+      cursorCanvas.style.display = enabled ? "block" : "none";
+    }
+
+    function toggleWindow() {
+      dosboxWrap.style.display =
+        (dosboxWrap.style.display === "none") ? "block" : "none";
+    }
+
+    btnCursor.onclick = () => setEnabled(!enabled);
+    btnWindow.onclick = () => toggleWindow();
+
+    sizeInput.oninput = (e) => {
+        const val = parseInt(e.target.value);
+        if(!isNaN(val) && val > 0 && val < 2048) { updateCursorSize(val); }
+    };
+
+    document.addEventListener("keydown", (e) => {
+      const k = e.key.toUpperCase();
+      if (e.ctrlKey && e.shiftKey && k === "D") { e.preventDefault(); setEnabled(!enabled); }
+      if (e.ctrlKey && e.shiftKey && k === "V") { e.preventDefault(); toggleWindow(); }
+    }, { capture: true });
+
+    // Cursor Path Logic
+    function arrowPath(ctx, size) {
+      const k = size / 22;
+      const p = size * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(p, p);
+      ctx.lineTo(p, p + (17 * k));
+      ctx.lineTo(p + (4 * k), p + (13 * k));
+      ctx.lineTo(p + (7 * k), p + (19 * k));
+      ctx.lineTo(p + (9 * k), p + (18 * k));
+      ctx.lineTo(p + (6 * k), p + (12 * k));
+      ctx.lineTo(p + (12 * k), p + (12 * k));
+      ctx.closePath();
+    }
+
+    function updateCursorSize(newSize) {
+      CURSOR_SIZE = newSize;
+      // Canvas
+      cursorCanvas.width = CURSOR_SIZE * dpr;
+      cursorCanvas.height = CURSOR_SIZE * dpr;
+      cursorCanvas.style.width = CURSOR_SIZE + "px";
+      cursorCanvas.style.height = CURSOR_SIZE + "px";
+      cursorCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Mask
+      maskCanvas.width = CURSOR_SIZE;
+      maskCanvas.height = CURSOR_SIZE;
+      maskCtx.clearRect(0, 0, CURSOR_SIZE, CURSOR_SIZE);
+      maskCtx.fillStyle = "#fff";
+      arrowPath(maskCtx, CURSOR_SIZE);
+      maskCtx.fill();
+      // Outline
+      outlineCanvas.width = CURSOR_SIZE;
+      outlineCanvas.height = CURSOR_SIZE;
+      outlineCtx.clearRect(0, 0, CURSOR_SIZE, CURSOR_SIZE);
+      outlineCtx.strokeStyle = "#000";
+      outlineCtx.lineWidth = Math.max(1, CURSOR_SIZE * 0.06);
+      outlineCtx.lineJoin = "round";
+      arrowPath(outlineCtx, CURSOR_SIZE);
+      outlineCtx.stroke();
+    }
+
+    // Init
+    setEnabled(true);
+    updateCursorSize(CURSOR_SIZE);
+
+    // Mouse Tracking
+    let mouseX = -9999, mouseY = -9999;
+    document.addEventListener("mousemove", (e) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      if (!enabled) return;
+      cursorCanvas.style.transform =
+        `translate3d(${mouseX - HOTSPOT_X}px, ${mouseY - HOTSPOT_Y}px, 0)`;
+    }, { passive: true, capture: true });
+
+    // DOOM Instance
+    new Dosbox({
+      id: "dosbox",
+      onload: (db) => db.run(ZIP_PATH, EXE_PATH)
+    });
+
+    let sourceCanvas = null;
+    const t = setInterval(() => {
+      const c = document.querySelector(".dosbox-canvas");
+      if (c) { sourceCanvas = c; clearInterval(t); }
+    }, 50);
+
+    // Render Loop
+    function render() {
+      cursorCtx.clearRect(0, 0, CURSOR_SIZE, CURSOR_SIZE);
+      if (enabled) {
+        if (sourceCanvas) {
+          const arrowWidth = CURSOR_SIZE * 0.6;
+          const arrowHeight = CURSOR_SIZE * 0.9;
+          cursorCtx.drawImage(sourceCanvas, 0, 0, arrowWidth, arrowHeight);
+        }
+        // Apply the mask
+        cursorCtx.globalCompositeOperation = "destination-in";
+        cursorCtx.drawImage(maskCanvas, 0, 0);
+        // Draw the outline on top
+        cursorCtx.globalCompositeOperation = "source-over";
+        cursorCtx.drawImage(outlineCanvas, 0, 0);
+        if (mouseX !== -9999) {
+          cursorCanvas.style.transform =
+            `translate3d(${mouseX - HOTSPOT_X}px, ${mouseY - HOTSPOT_Y}px, 0)`;
+        }
+      }
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
